@@ -1,0 +1,17 @@
+{
+  "name": "rymalia-plugins",
+  "owner": {
+    "name": "rymalia"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugins"
+  },
+  "plugins": [
+    {
+      "name": "session-tools",
+      "source": "./plugins/session-tools",
+      "description": "Session timestamps and summary generation for Claude Code",
+      "version": "1.0.0"
+    }
+  ]
+}

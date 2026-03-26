@@ -1,0 +1,8 @@
+{
+  "name": "session-tools",
+  "description": "Session timestamps and summary generation for Claude Code",
+  "version": "1.0.0",
+  "author": {
+    "name": "rymalia"
+  }
+}
