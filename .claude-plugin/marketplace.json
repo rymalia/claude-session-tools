@@ -10,8 +10,8 @@
     {
       "name": "session-tools",
       "source": "./plugins/session-tools",
-      "description": "Session timestamps and summary generation for Claude Code",
-      "version": "1.0.0"
+      "description": "Session timestamps, summary generation, and transcript replay for Claude Code",
+      "version": "1.1.0"
     }
   ]
 }
