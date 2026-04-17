@@ -2,15 +2,32 @@
 
 Generate a comprehensive session summary document with accurate timestamps and metadata.
 
-## Step 1: Gather Timestamps
+## Step 1: Collect Metadata in One Call
+
+Run this single command to gather the end-time and project metadata in one shot:
+
+```bash
+bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"
+```
+
+Output is `key: value` lines. Parse:
+
+- **now**: session end time. Always present.
+- **project**: always present.
+- **branch**: omitted if not in a git repo.
+- **open_prs**: JSON array; omitted if `gh` is not installed.
+
+**Do NOT invoke `/now` as a separate skill or slash command** — the `now:` line from this script replaces it. Invoking `/now` from inside `/session-summary` is fragile across Claude Code clients (skill-name resolution varies).
+
+If `$SESSION_TOOLS_ROOT` is unset (e.g. a session that started before the plugin was updated), fall back to: (a) the cwd from your environment for the project name, (b) the git branch from the initial git status block, and (c) run `date '+%Y-%m-%d %I:%M %p %Z'` for the end time. Do not run separate `basename`/`git branch`/`gh pr list` commands to work around a missing `$SESSION_TOOLS_ROOT`; it defeats the purpose of the consolidation.
+
+## Step 2: Gather Start and Resume Timestamps
 
 **Start time**: Check if `SESSION_START_TIME` is visible in your current context (it is injected by the SessionStart hook). If not, retrieve it by running:
 
 ```bash
 echo $SESSION_START_TIME
 ```
-
-**End time**: Run `/now` to get the current datetime. This is the session end time.
 
 **Resume times**: Check if `SESSION_RESUME_TIME` is visible in your current context. If not, run:
 
@@ -20,23 +37,14 @@ echo $SESSION_RESUME_TIME
 
 If the value is empty, the session was not resumed — omit the `resumed` field entirely.
 
-## Step 2: Gather Project Metadata
+## Step 3: Map Fields to Frontmatter
 
-Run this single command to collect all metadata fields at once (consolidates three prior commands into one permission prompt):
+- **project**: from the `project:` line.
+- **branch**: from the `branch:` line. Also omit the frontmatter `branch` field when the branch is `main`/`master` with no meaningful branch context.
+- **related_pr**: from the `open_prs:` JSON array. If a PR was created or worked on during this session, include its number. Omit if not applicable. Do not include with an empty value.
+- **time range**: start from `SESSION_START_TIME`, end from the script's `now:` line.
 
-```bash
-bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"
-```
-
-Output is `key: value` lines. Parse:
-
-- **project**: value of the `project:` line (always present).
-- **branch**: value of the `branch:` line. The line is omitted entirely if not in a git repo. Also omit the frontmatter `branch` field when the branch is `main`/`master` with no meaningful branch context.
-- **related_pr**: parse the `open_prs:` JSON array. If a PR was created or worked on during this session, include its number. Omit if not applicable. Do not include with an empty value. The `open_prs:` line is omitted entirely if `gh` is not installed.
-
-If `$SESSION_TOOLS_ROOT` is unset (e.g. a session that started before the plugin was updated), fall back to context — use the cwd from your environment for the project name and the git branch from the initial git status block. Do not run separate `basename`/`git branch`/`gh pr list` commands just to work around this; it defeats the purpose of the consolidation.
-
-## Step 3: Write the Summary
+## Step 4: Write the Summary
 
 Save to: `docs/session-summary-YYYY-MM-DD-{VERY SHORT DESCRIPTOR}.md`
 

@@ -1,11 +1,12 @@
 #!/bin/bash
-# Emit project metadata for /session-summary in a single invocation, so users
-# only need one permission allowlist entry instead of three (basename, git
-# branch, gh pr list). Output is key: value lines; missing fields are omitted
-# so the caller can treat absence as "not applicable."
+# Emit everything /session-summary needs in a single invocation, so users
+# only need one permission allowlist entry. Output is key: value lines;
+# missing fields are omitted so the caller can treat absence as "not
+# applicable." Fields: now, project, branch, open_prs.
 
 set -u
 
+echo "now: $(date '+%Y-%m-%d %I:%M %p %Z')"
 echo "project: $(basename "$PWD")"
 
 branch="$(git branch --show-current 2>/dev/null || true)"

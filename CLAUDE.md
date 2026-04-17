@@ -22,14 +22,16 @@ Provides three slash commands (`/now`, `/session-summary`, `/replay`) and one `S
 
 ### Required permissions (first-run setup)
 
-`/session-summary` needs two allowlist entries to run without permission prompts. `/now` contributes one (`date`), and all project metadata is collected by a single script (see next section) that contributes the other.
+`/session-summary` needs a single allowlist entry. `/now` is a separate standalone command and needs its own entry if you plan to use it on its own.
 
 | Command | Used by | Allowlist entry |
 |---------|---------|-----------------|
-| `date '+%Y-%m-%d %I:%M %p %Z'` | `/now` (invoked during `/session-summary` Step 1) | `Bash(date:*)` |
-| `bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"` | `/session-summary` Step 2 (project, branch, open PRs) | `Bash(bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh")` |
+| `bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"` | `/session-summary` (end-time, project, branch, open PRs) | `Bash(bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh")` |
+| `date '+%Y-%m-%d %I:%M %p %Z'` | `/now` standalone (NOT invoked by `/session-summary`) | `Bash(date:*)` |
 
-Add these two entries to the `permissions.allow` array in `~/.claude/settings.json` (user-level, so they apply in any project where `/session-summary` runs). Both are read-only.
+Add to the `permissions.allow` array in `~/.claude/settings.json` (user-level, so they apply in any project). Both are read-only.
+
+**Why `/session-summary` no longer invokes `/now`.** When Claude Code surfaces slash commands as skills, they are namespaced by plugin (`session-tools:now`). Invoking a bare `/now` from inside another command's markdown was fragile — the LLM occasionally rendered it as `Skill(now)` and hit "Unknown skill: now." To avoid the cross-command dependency, the metadata script emits `now: <timestamp>` as its first line. `/now` remains a useful standalone command; it just isn't called from `/session-summary` anymore.
 
 The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $SESSION_RESUME_TIME`) are covered by the common `Bash(echo:*)` entry most users already have.
 
@@ -39,7 +41,7 @@ The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $S
 
 ### Metadata collection script
 
-`scripts/collect-metadata.sh` bundles `basename "$PWD"`, `git branch --show-current`, and `gh pr list ...` into a single invocation. Output is `key: value` lines, with absent fields omitted (no branch if not a git repo; no `open_prs` if `gh` isn't installed). If you add a new field to the `/session-summary` frontmatter, prefer extending this script over adding a second shell-out — keep the command to one permission surface.
+`scripts/collect-metadata.sh` bundles `date`, `basename "$PWD"`, `git branch --show-current`, and `gh pr list ...` into a single invocation. Output is `key: value` lines: `now:` (always), `project:` (always), `branch:` (omitted if not a git repo), `open_prs:` (omitted if `gh` isn't installed). If you add a new field to the `/session-summary` frontmatter, prefer extending this script over adding a second shell-out — keep the command to one permission surface.
 
 ### How the timestamp mechanism works
 
