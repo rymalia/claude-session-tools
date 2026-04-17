@@ -12,6 +12,12 @@ INPUT=$(cat)
 SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 TS=$(date '+%Y-%m-%d %I:%M %p %Z')
 
+# Persist the plugin root so commands (e.g. /session-summary) can reference scripts
+# via a stable env-var path — yields a version-stable permission allowlist entry.
+if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "export SESSION_TOOLS_ROOT='$CLAUDE_PLUGIN_ROOT'" >> "$CLAUDE_ENV_FILE"
+fi
+
 case "$SOURCE" in
   startup|clear)
     SESSION_START_TIME="$TS"

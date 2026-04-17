@@ -20,6 +20,27 @@ When adding a new plugin, register it in both `marketplace.json` and its own `pl
 
 Provides three slash commands (`/now`, `/session-summary`, `/replay`) and one `SessionStart` hook that captures session timestamps.
 
+### Required permissions (first-run setup)
+
+`/session-summary` needs two allowlist entries to run without permission prompts. `/now` contributes one (`date`), and all project metadata is collected by a single script (see next section) that contributes the other.
+
+| Command | Used by | Allowlist entry |
+|---------|---------|-----------------|
+| `date '+%Y-%m-%d %I:%M %p %Z'` | `/now` (invoked during `/session-summary` Step 1) | `Bash(date:*)` |
+| `bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"` | `/session-summary` Step 2 (project, branch, open PRs) | `Bash(bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh")` |
+
+Add these two entries to the `permissions.allow` array in `~/.claude/settings.json` (user-level, so they apply in any project where `/session-summary` runs). Both are read-only.
+
+The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $SESSION_RESUME_TIME`) are covered by the common `Bash(echo:*)` entry most users already have.
+
+**Why the allowlist entry uses a literal `$SESSION_TOOLS_ROOT`.** Claude Code matches permission strings against the **pre-expansion** command text, not the resolved path. `${CLAUDE_PLUGIN_ROOT}` embeds the plugin version, so an exact-path allow would break on every upgrade. The `SessionStart` hook persists `SESSION_TOOLS_ROOT` to `$CLAUDE_ENV_FILE`, and the `/session-summary` command invokes the script via that var — so the allowlist string stays stable across plugin versions.
+
+**Why settings cascade matters here.** Claude Code merges allowlists from `~/.claude/settings.json` → `~/.claude/settings.local.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json`. It does **not** walk up from `<cwd>` through parent directories. Permissions added to `~/projects/.claude/settings.local.json` only apply when `~/projects` is itself the cwd, not when a subdirectory is. Because `/session-summary` is designed to run in any project, put its permissions at the user level.
+
+### Metadata collection script
+
+`scripts/collect-metadata.sh` bundles `basename "$PWD"`, `git branch --show-current`, and `gh pr list ...` into a single invocation. Output is `key: value` lines, with absent fields omitted (no branch if not a git repo; no `open_prs` if `gh` isn't installed). If you add a new field to the `/session-summary` frontmatter, prefer extending this script over adding a second shell-out — keep the command to one permission surface.
+
 ### How the timestamp mechanism works
 
 `scripts/session-start-time.sh` is run by the `SessionStart` hook and reads a JSON payload from stdin. The `source` field drives behavior:

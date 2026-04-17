@@ -22,23 +22,19 @@ If the value is empty, the session was not resumed — omit the `resumed` field 
 
 ## Step 2: Gather Project Metadata
 
-Run these commands to collect metadata:
+Run this single command to collect all metadata fields at once (consolidates three prior commands into one permission prompt):
 
 ```bash
-basename "$PWD"
+bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"
 ```
 
-```bash
-git branch --show-current 2>/dev/null
-```
+Output is `key: value` lines. Parse:
 
-```bash
-gh pr list --author @me --state open --json number,title --limit 5 2>/dev/null
-```
+- **project**: value of the `project:` line (always present).
+- **branch**: value of the `branch:` line. The line is omitted entirely if not in a git repo. Also omit the frontmatter `branch` field when the branch is `main`/`master` with no meaningful branch context.
+- **related_pr**: parse the `open_prs:` JSON array. If a PR was created or worked on during this session, include its number. Omit if not applicable. Do not include with an empty value. The `open_prs:` line is omitted entirely if `gh` is not installed.
 
-- **project**: Use the folder name from `basename "$PWD"`
-- **branch**: Use the current git branch. Omit the field if not in a git repo or on `main`/`master` with no meaningful branch context.
-- **related_pr**: If a PR was created or worked on during this session, include its number. Omit if not applicable. Do not include with an empty value.
+If `$SESSION_TOOLS_ROOT` is unset (e.g. a session that started before the plugin was updated), fall back to context — use the cwd from your environment for the project name and the git branch from the initial git status block. Do not run separate `basename`/`git branch`/`gh pr list` commands just to work around this; it defeats the purpose of the consolidation.
 
 ## Step 3: Write the Summary
 
