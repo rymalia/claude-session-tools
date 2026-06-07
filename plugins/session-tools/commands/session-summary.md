@@ -37,12 +37,21 @@ echo $SESSION_RESUME_TIME
 
 If the value is empty, the session was not resumed — omit the `resumed` field entirely.
 
+**Session id**: Check if `CLAUDE_SESSION_ID` is visible in your current context (it is injected by the SessionStart hook alongside the timestamps). If not, run:
+
+```bash
+echo $CLAUDE_SESSION_ID
+```
+
+This is the Claude Code session identifier — the UUID naming the JSONL transcript at `~/.claude/projects/<slug>/<id>.jsonl` (the same id `/replay` consumes). If the value is empty (e.g. a session that started before the plugin was updated to capture it), omit the `session id` field entirely rather than guessing.
+
 ## Step 3: Map Fields to Frontmatter
 
 - **project**: from the `project:` line.
 - **branch**: from the `branch:` line. Also omit the frontmatter `branch` field when the branch is `main`/`master` with no meaningful branch context.
 - **related_pr**: from the `open_prs:` JSON array. If a PR was created or worked on during this session, include its number. Omit if not applicable. Do not include with an empty value.
 - **time range**: start from `SESSION_START_TIME`, end from the script's `now:` line.
+- **session id**: from `CLAUDE_SESSION_ID`. Omit the field entirely if unavailable.
 
 ## Step 4: Write the Summary
 
@@ -58,6 +67,7 @@ Format the `time` field as a range using only the time portion and timezone, e.g
 
 ```yaml
 ---
+session_id: <CLAUDE_SESSION_ID value>
 date: YYYY-MM-DD
 time: "<start time> – <end time>"
 resumed: "<resume1>, <resume2>, ..."
@@ -68,6 +78,7 @@ related_pr: <PR number>
 ```
 
 Remember:
+- `session_id`: omit entirely if `CLAUDE_SESSION_ID` is unavailable
 - `resumed`: omit entirely if session was not resumed
 - `branch`: omit entirely if not applicable
 - `related_pr`: omit entirely if not applicable

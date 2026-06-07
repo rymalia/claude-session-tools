@@ -53,13 +53,15 @@ The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $S
 | `resume`        | Preserve `SESSION_START_TIME`; append current time to `SESSION_RESUME_TIME` as a comma-separated list. |
 | `compact`       | No-op — values are re-injected unchanged.                              |
 
+The script also extracts `session_id` from the hook payload and persists it as `CLAUDE_SESSION_ID` (re-captured on every source so resume/compact keep it fresh). This is the UUID naming the JSONL transcript at `~/.claude/projects/<slug>/<id>.jsonl` — the same id `/replay` consumes — and `/session-summary` stamps it into frontmatter.
+
 The script persists values by appending `export` lines to `$CLAUDE_ENV_FILE` (so they survive as real env vars for the whole session), then also prints `KEY=VALUE` lines to stdout so they appear in the model's context. Downstream commands like `/session-summary` read them back with `echo $SESSION_START_TIME`.
 
 If you modify this script, preserve both behaviors — the `CLAUDE_ENV_FILE` write (for persistence) *and* the stdout echo (for immediate context injection).
 
 ### `/session-summary` contract
 
-The command requires timestamps to come from `SESSION_START_TIME`, `SESSION_RESUME_TIME`, or `/now` — **never estimated**. Output path is `docs/session-summary-YYYY-MM-DD-<short-descriptor>.md` with YAML frontmatter (`date`, `time`, optional `resumed`/`branch`/`related_pr`, `project`). Omit optional frontmatter fields entirely rather than leaving them blank.
+The command requires timestamps to come from `SESSION_START_TIME`, `SESSION_RESUME_TIME`, or `/now` — **never estimated**. Output path is `docs/session-summary-YYYY-MM-DD-<short-descriptor>.md` with YAML frontmatter (`date`, `time`, `project`, optional `session_id`/`resumed`/`branch`/`related_pr`). The `session_id` comes from `CLAUDE_SESSION_ID` (injected by the SessionStart hook). Omit optional frontmatter fields entirely rather than leaving them blank.
 
 ### `/replay` contract
 

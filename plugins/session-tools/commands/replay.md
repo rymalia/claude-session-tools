@@ -38,7 +38,7 @@ Events from non-main sources are annotated in headers: `[sub: agent-<id>]` for s
 
 ## Step 3: Present the output
 
-- If the output is short (a few hundred lines), show it inline.
+- If the output is short (a few hundred lines), show it inline, AND save it to `docs/replay-<short-id>.md`.
 - If the output is large (many thousands of lines), save it to `docs/replay-<short-id>.md` and show the user a brief summary plus the file path, so the main context stays lean. Offer to surface specific turns on request.
 
 ## Notes
