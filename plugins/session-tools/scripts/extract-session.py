@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import io
 import json
 import re
 import signal
@@ -376,6 +377,55 @@ def source_tag(source: str) -> str:
     return f" [{source}]"
 
 
+def derive_flag_tokens(args: argparse.Namespace) -> list[str]:
+    """Filename tokens describing the view flags, in a canonical (stable) order.
+
+    Built from the flags exactly as passed — call this BEFORE --full is expanded
+    into its component flags and BEFORE history auto-enable mutates args.history,
+    so the name mirrors the command the user typed (e.g. `--full` -> "full", not
+    the four flags it expands to). The fixed ordering here means the same logical
+    replay always maps to one filename regardless of how the flags were ordered
+    on the command line.
+    """
+    tokens: list[str] = []
+    if args.verbatim:
+        tokens.append("verbatim")
+    if args.raw:
+        tokens.append("raw")
+    if args.full:
+        tokens.append("full")
+    else:
+        if args.tools:
+            tokens.append("tools")
+        if args.tool_results:
+            tokens.append("tool-results")
+        if args.thinking:
+            tokens.append("thinking")
+        if args.sidechains:
+            tokens.append("sidechains")
+    if args.history is True:        # explicit --history (None = unspecified)
+        tokens.append("history")
+    elif args.history is False:     # explicit --no-history
+        tokens.append("no-history")
+    if args.max_chars != 400:       # only when overriding the default
+        tokens.append(f"max{args.max_chars}")
+    return tokens
+
+
+def derive_output_path(save_dir: Path, session_id: str | None,
+                       tokens: list[str]) -> Path:
+    """Build `replay-<shortid>[-<flag>...].md` under save_dir, never clobbering
+    an existing file — append -2, -3, ... until the name is free."""
+    short = (session_id or "session")[:8]
+    base = "-".join(["replay", short, *tokens])
+    candidate = save_dir / f"{base}.md"
+    n = 2
+    while candidate.exists():
+        candidate = save_dir / f"{base}-{n}.md"
+        n += 1
+    return candidate
+
+
 def render_event(obj: dict, args: argparse.Namespace, chunks: list[str]) -> int:
     """Render one event; append to chunks. Returns turns added (0 or 1)."""
     t = obj.get("type")
@@ -397,16 +447,71 @@ def render_event(obj: dict, args: argparse.Namespace, chunks: list[str]) -> int:
 
     if t == "user":
         content = msg.get("content")
+        # isMeta user events are harness-injected synthetic messages (command-body
+        # expansions, "[Image: source: ...]" refs) — noise for a conversation
+        # replay. Keep them only in verbatim mode.
+        if obj.get("isMeta") and not args.verbatim:
+            return 0
         if isinstance(content, str):
             text = clean_user_text(content, args.verbatim)
             if text:
                 chunks.append(header("user"))
                 chunks.append(f"\n{text}\n")
                 return 1
-        elif args.tool_results:
-            for tr in extract_user_tool_results(msg):
-                chunks.append(header("tool_result"))
-                chunks.append(f"\n```\n{truncate(tr, args.max_chars)}\n```\n")
+            return 0
+        if isinstance(content, list):
+            counted = 0
+            header_written = False
+
+            # A prompt carrying an image/attachment stores its text in a list of
+            # blocks rather than a bare string. Render the text blocks too, or the
+            # whole prompt is silently dropped.
+            parts = [b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text"]
+            text = clean_user_text("\n".join(p for p in parts if p), args.verbatim)
+            if text:
+                chunks.append(header("user"))
+                header_written = True
+                counted = 1
+                chunks.append(f"\n{text}\n")
+
+            # Image blocks: embed so they are actually visible in the rendered
+            # markdown. The pixels live as base64 in the transcript (the
+            # image-cache PNG the harness references is ephemeral and often
+            # already deleted), so we inline a self-contained data: URI.
+            # imagePasteIds aligns the label with the "[Image #N]" marker the
+            # harness leaves in the prompt text.
+            paste_ids = obj.get("imagePasteIds") or []
+            img_n = 0
+            for b in content:
+                if not isinstance(b, dict) or b.get("type") != "image":
+                    continue
+                src = b.get("source") or {}
+                label = paste_ids[img_n] if img_n < len(paste_ids) else img_n + 1
+                img_n += 1
+                if src.get("type") == "base64" and src.get("data"):
+                    uri = (f"data:{src.get('media_type', 'image/png')};base64,"
+                           f"{src['data']}")
+                elif src.get("type") == "url" and src.get("url"):
+                    uri = src["url"]
+                else:
+                    uri = None
+                if not header_written:
+                    chunks.append(header("user"))
+                    header_written = True
+                    counted = 1
+                if args.raw or uri is None:
+                    # Raw mode is plain text; a 300KB data URI would swamp it.
+                    chunks.append(f"\n[Image #{label}: "
+                                  f"{src.get('media_type', 'image')}]\n")
+                else:
+                    chunks.append(f"\n![Image #{label}]({uri})\n")
+
+            if args.tool_results:
+                for tr in extract_user_tool_results(msg):
+                    chunks.append(header("tool_result"))
+                    chunks.append(f"\n```\n{truncate(tr, args.max_chars)}\n```\n")
+            return counted
         return 0
 
     # assistant
@@ -460,7 +565,15 @@ def main() -> int:
                     help="keep <system-reminder> and similar harness tags")
     ap.add_argument("--raw", action="store_true",
                     help="plain text output, no markdown headers")
+    ap.add_argument("--save-dir", dest="save_dir", default=None,
+                    help="write output to a flag-derived, non-clobbering file "
+                         "in this directory (created if missing) instead of "
+                         "stdout; prints the saved path")
     args = ap.parse_args()
+
+    # Capture filename tokens from the flags AS TYPED, before --full expansion
+    # and history auto-enable change the resolved flag state.
+    flag_tokens = derive_flag_tokens(args)
 
     if args.full:
         args.tools = args.tool_results = args.thinking = args.sidechains = True
@@ -524,7 +637,7 @@ def main() -> int:
     for obj in events:
         turns += render_event(obj, args, chunks)
 
-    out = sys.stdout
+    out = io.StringIO()
     idx = bundle.index_meta
     if not args.raw:
         out.write(f"# Session replay: `{session_id or bundle.session_id or '?'}`\n\n")
@@ -563,6 +676,18 @@ def main() -> int:
         )
         out.write(f"- **filters**: {flags}\n\n---\n")
     out.write("".join(chunks).rstrip() + "\n")
+    report = out.getvalue()
+
+    if args.save_dir:
+        save_dir = Path(args.save_dir).expanduser()
+        save_dir.mkdir(parents=True, exist_ok=True)
+        path = derive_output_path(save_dir, session_id or bundle.session_id,
+                                  flag_tokens)
+        path.write_text(report)
+        line_count = report.count("\n")
+        print(f"saved: {path}  ({turns} turns, {line_count} lines)")
+    else:
+        sys.stdout.write(report)
     return 0
 
 

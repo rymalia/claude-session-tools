@@ -8,8 +8,10 @@ The first argument is a session UUID, a prefix (≥4 chars), or an absolute path
 
 ## Step 1: Run the extractor
 
+This command **always saves its output to a file** — never print the replay only to the conversation. Pass `--save-dir docs` so the extractor writes the result to a file and reports the path:
+
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract-session.py" $ARGUMENTS
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract-session.py" $ARGUMENTS --save-dir docs
 ```
 
 By default, the output contains only the human conversation — user turns and assistant text — with harness noise (system reminders, local-command wrappers) stripped. Tool calls, tool results, thinking blocks, and subagent sidechains are omitted unless requested.
@@ -26,8 +28,22 @@ Flags to pass after the session ID:
 - `--max-chars N` — truncation limit for tool results and thinking (default 400)
 - `--verbatim` — keep `<system-reminder>` and similar tags instead of stripping
 - `--raw` — plain text output, no markdown headers
+- `--save-dir DIR` — write to a flag-derived, non-clobbering file in `DIR` (created if missing) and print the saved path instead of dumping to stdout
 
 Events from non-main sources are annotated in headers: `[sub: agent-<id>]` for subagent files and `[from history.jsonl]` for backfilled user prompts.
+
+### Output filename
+
+When `--save-dir` is given, the extractor names the file `replay-<short-id>[-<flags>].md`, where `<short-id>` is the first 8 characters of the session UUID and `<flags>` reflects the view flags used, in a fixed canonical order (so `--verbatim --full` and `--full --verbatim` both yield the same name):
+
+| Command | File written |
+|---------|--------------|
+| `/replay c506e1c6…` | `docs/replay-c506e1c6.md` |
+| `/replay c506e1c6… --full` | `docs/replay-c506e1c6-full.md` |
+| `/replay c506e1c6… --verbatim --full` | `docs/replay-c506e1c6-verbatim-full.md` |
+| `/replay c506e1c6… --tools --max-chars 200` | `docs/replay-c506e1c6-tools-max200.md` |
+
+Existing files are **never overwritten**: a successive run of the same command writes `…-2.md`, `…-3.md`, and so on. The extractor handles naming and collision avoidance itself — do not construct the filename yourself.
 
 ## Step 2: Handle ambiguity and errors
 
@@ -38,10 +54,13 @@ Events from non-main sources are annotated in headers: `[sub: agent-<id>]` for s
 
 ## Step 3: Present the output
 
-- If the output is short (a few hundred lines), show it inline, AND save it to `docs/replay-<short-id>.md`.
-- If the output is large (many thousands of lines), save it to `docs/replay-<short-id>.md` and show the user a brief summary plus the file path, so the main context stays lean. Offer to surface specific turns on request.
+The extractor has already written the file (Step 1) and printed a `saved: <path> (N turns, M lines)` line. Always report that path to the user.
+
+- If the replay is short (a few hundred lines), additionally `Read` the saved file and show it inline.
+- If the replay is large (many thousands of lines), do **not** dump it into the conversation — give the user a brief summary plus the file path, so the main context stays lean. Offer to surface specific turns on request.
 
 ## Notes
 
 - The script is read-only; it never modifies the original JSONL.
+- **Images** in a prompt are embedded inline as a base64 `data:` URI, so they render directly in the saved markdown (decoded from the transcript, since the harness `image-cache` file is ephemeral). `--raw` mode emits a `[Image #N: <media_type>]` placeholder instead, to avoid swamping plain-text output.
 - For retelling or summarizing a long session, prefer running the extractor first (small cost) and reading its output, rather than reading the raw JSONL (many MB of envelope noise).
