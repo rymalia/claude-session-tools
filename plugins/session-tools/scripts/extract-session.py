@@ -403,6 +403,8 @@ def derive_flag_tokens(args: argparse.Namespace) -> list[str]:
             tokens.append("thinking")
         if args.sidechains:
             tokens.append("sidechains")
+    if args.embed_images:
+        tokens.append("embed-images")
     if args.history is True:        # explicit --history (None = unspecified)
         tokens.append("history")
     elif args.history is False:     # explicit --no-history
@@ -475,10 +477,13 @@ def render_event(obj: dict, args: argparse.Namespace, chunks: list[str]) -> int:
                 counted = 1
                 chunks.append(f"\n{text}\n")
 
-            # Image blocks: embed so they are actually visible in the rendered
-            # markdown. The pixels live as base64 in the transcript (the
-            # image-cache PNG the harness references is ephemeral and often
-            # already deleted), so we inline a self-contained data: URI.
+            # Image blocks: by default emit a lean `[Image #N: <media_type>]`
+            # placeholder. Full base64 embedding (an inline `data:` URI that
+            # renders the picture directly in the markdown) is opt-in via
+            # --embed-images, and never applied in --raw plain-text output since
+            # a multi-hundred-KB URI would swamp it. The pixels live as base64
+            # in the transcript (the image-cache PNG the harness references is
+            # ephemeral and often already deleted), so embedding inlines that.
             # imagePasteIds aligns the label with the "[Image #N]" marker the
             # harness leaves in the prompt text.
             paste_ids = obj.get("imagePasteIds") or []
@@ -489,23 +494,21 @@ def render_event(obj: dict, args: argparse.Namespace, chunks: list[str]) -> int:
                 src = b.get("source") or {}
                 label = paste_ids[img_n] if img_n < len(paste_ids) else img_n + 1
                 img_n += 1
-                if src.get("type") == "base64" and src.get("data"):
-                    uri = (f"data:{src.get('media_type', 'image/png')};base64,"
-                           f"{src['data']}")
-                elif src.get("type") == "url" and src.get("url"):
-                    uri = src["url"]
-                else:
-                    uri = None
                 if not header_written:
                     chunks.append(header("user"))
                     header_written = True
                     counted = 1
-                if args.raw or uri is None:
-                    # Raw mode is plain text; a 300KB data URI would swamp it.
-                    chunks.append(f"\n[Image #{label}: "
-                                  f"{src.get('media_type', 'image')}]\n")
-                else:
+                media = src.get("media_type", "image")
+                uri = None
+                if args.embed_images and not args.raw:
+                    if src.get("type") == "base64" and src.get("data"):
+                        uri = f"data:{media};base64,{src['data']}"
+                    elif src.get("type") == "url" and src.get("url"):
+                        uri = src["url"]
+                if uri is not None:
                     chunks.append(f"\n![Image #{label}]({uri})\n")
+                else:
+                    chunks.append(f"\n[Image #{label}: {media}]\n")
 
             if args.tool_results:
                 for tr in extract_user_tool_results(msg):
@@ -565,6 +568,10 @@ def main() -> int:
                     help="keep <system-reminder> and similar harness tags")
     ap.add_argument("--raw", action="store_true",
                     help="plain text output, no markdown headers")
+    ap.add_argument("--embed-images", dest="embed_images", action="store_true",
+                    help="embed images inline as base64 data: URIs so they "
+                         "render in the markdown (default: a lean "
+                         "[Image #N: <media_type>] placeholder); ignored in --raw")
     ap.add_argument("--save-dir", dest="save_dir", default=None,
                     help="write output to a flag-derived, non-clobbering file "
                          "in this directory (created if missing) instead of "

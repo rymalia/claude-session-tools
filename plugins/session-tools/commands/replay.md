@@ -28,6 +28,7 @@ Flags to pass after the session ID:
 - `--max-chars N` — truncation limit for tool results and thinking (default 400)
 - `--verbatim` — keep `<system-reminder>` and similar tags instead of stripping
 - `--raw` — plain text output, no markdown headers
+- `--embed-images` — embed images inline as base64 `data:` URIs so they render in the markdown (default is a lean `[Image #N: <media_type>]` placeholder); ignored in `--raw`
 - `--save-dir DIR` — write to a flag-derived, non-clobbering file in `DIR` (created if missing) and print the saved path instead of dumping to stdout
 
 Events from non-main sources are annotated in headers: `[sub: agent-<id>]` for subagent files and `[from history.jsonl]` for backfilled user prompts.
@@ -62,5 +63,5 @@ The extractor has already written the file (Step 1) and printed a `saved: <path>
 ## Notes
 
 - The script is read-only; it never modifies the original JSONL.
-- **Images** in a prompt are embedded inline as a base64 `data:` URI, so they render directly in the saved markdown (decoded from the transcript, since the harness `image-cache` file is ephemeral). `--raw` mode emits a `[Image #N: <media_type>]` placeholder instead, to avoid swamping plain-text output.
+- **Images** in a prompt render as a lean `[Image #N: <media_type>]` placeholder by default. Pass `--embed-images` to inline the full picture as a base64 `data:` URI (decoded from the transcript, since the harness `image-cache` file is ephemeral) so it displays directly in the saved markdown — at the cost of ~33% size overhead per image. `--raw` mode always uses the placeholder regardless, to avoid swamping plain-text output.
 - For retelling or summarizing a long session, prefer running the extractor first (small cost) and reading its output, rather than reading the raw JSONL (many MB of envelope noise).
