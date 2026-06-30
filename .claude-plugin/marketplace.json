@@ -10,8 +10,8 @@
     {
       "name": "session-tools",
       "source": "./plugins/session-tools",
-      "description": "Session timestamps, summary generation, single + multi-session transcript replay for Claude Code",
-      "version": "1.5.1"
+      "description": "Session timestamps, summary generation, single + multi-session transcript replay for Claude Code and OpenAI Codex",
+      "version": "1.6.0"
     }
   ]
 }

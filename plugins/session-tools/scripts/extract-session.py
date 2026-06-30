@@ -46,6 +46,7 @@ except (AttributeError, ValueError):
 
 SESSIONS_ROOT = Path.home() / ".claude" / "projects"
 HISTORY_PATH = Path.home() / ".claude" / "history.jsonl"
+CODEX_SESSIONS_ROOT = Path.home() / ".codex" / "sessions"
 
 NOISE_TAGS = (
     "system-reminder",
@@ -82,6 +83,8 @@ class SessionBundle:
     folder: Path | None = None        # <uuid>/ dir if present
     project_slug: str | None = None   # parent dir under ~/.claude/projects/
     index_meta: SessionIndex | None = None  # from sessions-index.json
+    is_codex: bool = False            # OpenAI Codex CLI rollout transcript
+    codex_meta: dict = field(default_factory=dict)  # session_meta payload bits
 
     @property
     def is_folder_only(self) -> bool:
@@ -288,6 +291,7 @@ def summarize_tool_use(part: dict) -> str:
     priority = (
         "file_path", "path", "pattern", "command", "description",
         "prompt", "query", "url", "skill", "subagent_type",
+        "input", "arguments", "cell_id",
     )
     hits: list[str] = []
     for k in priority:
@@ -312,6 +316,8 @@ def extract_assistant_blocks(msg: dict) -> list[tuple[str, str]]:
             out.append(("text", part.get("text", "")))
         elif t == "thinking":
             out.append(("thinking", part.get("thinking", "")))
+        elif t == "reasoning":  # Codex reasoning (usually encrypted)
+            out.append(("reasoning", part.get("text", "")))
         elif t == "tool_use":
             out.append(("tool_use", summarize_tool_use(part)))
     return out
@@ -365,6 +371,217 @@ def load_history_events(session_id: str) -> list[dict]:
                 "_source": "history",
             })
     return events
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Codex CLI rollout transcripts
+#
+# Codex stores sessions under ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl in a
+# different shape than Claude Code. Every line is an envelope
+# {timestamp, type, payload}; the conversational signal is spread across
+# response_item and event_msg records. We convert those into the SAME
+# Claude-shaped event dicts that render_event() consumes, so all rendering,
+# flags, and --save-dir logic is reused unchanged.
+# ---------------------------------------------------------------------------
+
+CODEX_ENVELOPE_TYPES = {
+    "session_meta", "response_item", "event_msg", "turn_context", "compacted",
+}
+
+
+def is_codex_file(path: Path) -> bool:
+    """Detect a Codex rollout transcript (vs a Claude Code one) by its envelope.
+
+    Codex wraps content as {timestamp, type, payload} with type in
+    CODEX_ENVELOPE_TYPES. Claude Code puts the role in a top-level `type`
+    (user/assistant/...) and carries a `message` key, never a `payload`.
+    """
+    try:
+        with path.open() as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                obj = json.loads(raw)
+                return (
+                    isinstance(obj, dict)
+                    and "payload" in obj
+                    and obj.get("type") in CODEX_ENVELOPE_TYPES
+                )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return False
+
+
+def _codex_tool_input(payload: dict) -> dict:
+    """Normalize a Codex tool-call payload into a Claude-style `input` dict so
+    summarize_tool_use() can render a one-liner."""
+    if payload.get("type") == "function_call":
+        raw = payload.get("arguments")
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return {"arguments": raw}
+            return parsed if isinstance(parsed, dict) else {"arguments": raw}
+        return raw if isinstance(raw, dict) else {}
+    # custom_tool_call: `input` is usually a raw string (often a code snippet).
+    inp = payload.get("input")
+    if isinstance(inp, dict):
+        return inp
+    return {"input": inp if isinstance(inp, str) else ""}
+
+
+def _codex_output_text(output) -> str:
+    """Flatten a Codex tool-call output (string, or list of {type,text}) to text."""
+    if isinstance(output, str):
+        return output
+    if isinstance(output, list):
+        parts = []
+        for item in output:
+            if isinstance(item, dict):
+                parts.append(item.get("text", ""))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(p for p in parts if p)
+    return ""
+
+
+def resolve_codex_path(id_or_path: str) -> Path | None:
+    """Resolve the user's argument to a Codex rollout file, or None to defer to
+    the Claude resolver.
+
+    Accepts an absolute path to a Codex .jsonl, or a UUID / prefix. Codex names
+    files rollout-<timestamp>-<uuid>.jsonl under ~/.codex/sessions/YYYY/MM/DD/,
+    so a bare UUID is matched as a filename substring. To keep Claude UUIDs and
+    Codex UUIDs from colliding, a bare id is only claimed for Codex when the
+    Claude tree has no matching .jsonl. Exits (code 2) on an ambiguous prefix.
+    """
+    p = Path(id_or_path).expanduser()
+    if p.is_file():
+        return p if is_codex_file(p) else None
+    if p.exists():
+        return None  # a dir or non-codex path — let the Claude resolver handle it
+    if not CODEX_SESSIONS_ROOT.is_dir():
+        return None
+    # Bare id/prefix: don't poach an id the Claude tree already owns.
+    claude_hits = (
+        sorted(SESSIONS_ROOT.glob(f"*/{id_or_path}*.jsonl"))
+        if SESSIONS_ROOT.is_dir() else []
+    )
+    if claude_hits:
+        return None
+    matches = sorted(CODEX_SESSIONS_ROOT.glob(f"**/*{id_or_path}*.jsonl"))
+    if len(matches) > 1:
+        sys.stderr.write(f"error: {id_or_path!r} matches multiple Codex sessions:\n")
+        for m in matches:
+            sys.stderr.write(f"  {m}\n")
+        sys.exit(2)
+    return matches[0] if matches else None
+
+
+def load_codex_events(path: Path) -> tuple[list[dict], dict]:
+    """Convert a Codex rollout transcript into Claude-shaped event dicts.
+
+    Returns (events, meta); meta carries session_id/cwd/model/cli_version from the
+    session_meta record. Only conversational signal is kept:
+
+        event_msg/user_message                -> user text turn
+        response_item/message role=assistant  -> assistant text turn
+        response_item/function_call           -> assistant tool_use   (--tools)
+        response_item/custom_tool_call        -> assistant tool_use   (--tools)
+        response_item/function_call_output    -> user tool_result     (--tool-results)
+        response_item/custom_tool_call_output -> user tool_result     (--tool-results)
+
+    Dropped as noise/duplication: response_item/message role in {user,developer}
+    (harness-injected AGENTS.md/environment context and the system prompt),
+    response_item/reasoning (encrypted_content with no plaintext summary),
+    event_msg/agent_message (byte-identical to the assistant response_item), and
+    bookkeeping (token_count, task_started/complete, *_tool_call_end echoes).
+    """
+    events: list[dict] = []
+    meta: dict = {}
+
+    def emit(etype: str, ts: str, content) -> None:
+        events.append({
+            "type": etype,
+            "timestamp": ts,
+            "message": {"role": etype, "content": content},
+            "isSidechain": False,
+            "_source": "main",
+        })
+
+    with path.open() as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            ts = obj.get("timestamp", "")
+            etype = obj.get("type")
+            payload = obj.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            if etype == "session_meta":
+                meta.setdefault("session_id",
+                                payload.get("session_id") or payload.get("id"))
+                meta.setdefault("cwd", payload.get("cwd"))
+                meta.setdefault("model",
+                                payload.get("model") or payload.get("model_provider"))
+                meta.setdefault("cli_version", payload.get("cli_version"))
+                continue
+
+            if etype == "event_msg":
+                # The clean, user-typed prompt. (All other event_msg subtypes are
+                # duplicates of response_items or bookkeeping — skip them.)
+                if payload.get("type") == "user_message":
+                    text = payload.get("message") or ""
+                    imgs = payload.get("images") or payload.get("local_images") or []
+                    if imgs:
+                        note = f"[{len(imgs)} image(s) attached]"
+                        text = note if not text.strip() else f"{text}\n\n{note}"
+                    if text.strip():
+                        emit("user", ts, text)
+                continue
+
+            if etype == "response_item":
+                pt = payload.get("type")
+                if pt == "message":
+                    if payload.get("role") != "assistant":
+                        continue  # user/developer = injected context / system
+                    text = "".join(
+                        b.get("text", "") for b in payload.get("content", [])
+                        if isinstance(b, dict)
+                    )
+                    if text.strip():
+                        emit("assistant", ts, [{"type": "text", "text": text}])
+                elif pt in ("function_call", "custom_tool_call"):
+                    emit("assistant", ts, [{
+                        "type": "tool_use",
+                        "name": payload.get("name", "?"),
+                        "input": _codex_tool_input(payload),
+                    }])
+                elif pt in ("function_call_output", "custom_tool_call_output"):
+                    text = _codex_output_text(payload.get("output"))
+                    if text.strip():
+                        emit("user", ts, [{"type": "tool_result", "content": text}])
+                elif pt == "reasoning":
+                    # Codex usually stores reasoning as encrypted_content with an
+                    # empty `summary`; keep a block so --thinking surfaces a
+                    # placeholder, and render the summary text on the rare
+                    # occasions it is present in plaintext.
+                    summary = payload.get("summary") or []
+                    text = "\n".join(
+                        s.get("text", "") for s in summary if isinstance(s, dict)
+                    ).strip()
+                    emit("assistant", ts, [{"type": "reasoning", "text": text}])
+                continue
+
+    return events, meta
 
 
 def source_tag(source: str) -> str:
@@ -533,6 +750,13 @@ def render_event(obj: dict, args: argparse.Namespace, chunks: list[str]) -> int:
                 chunks.append(header("assistant"))
                 wrote_header = True
             chunks.append(f"\n> _thinking:_ {truncate(body, args.max_chars)}\n")
+        elif kind == "reasoning" and args.thinking:
+            if not wrote_header:
+                chunks.append(header("assistant"))
+                wrote_header = True
+            shown = truncate(body, args.max_chars) if body.strip() \
+                else "[encrypted by Codex]"
+            chunks.append(f"\n> _reasoning:_ {shown}\n")
         elif kind == "tool_use" and args.tools:
             if not wrote_header:
                 chunks.append(header("assistant"))
@@ -585,59 +809,77 @@ def main() -> int:
     if args.full:
         args.tools = args.tool_results = args.thinking = args.sidechains = True
 
-    bundle = resolve_session(args.session)
-
-    # Subagent content is 100% sidechain. If that's all we have, the --sidechains
-    # flag would otherwise be a footgun.
-    if bundle.is_folder_only or bundle.subagent_paths and not bundle.main_path:
-        args.sidechains = True
-
-    # history.jsonl auto-default: on for folder-only, off otherwise.
-    if args.history is None:
-        args.history = bundle.is_folder_only
-
-    events: list[dict] = []
-    if bundle.main_path:
-        events.extend(load_jsonl_events(bundle.main_path, "main"))
-    for sp in bundle.subagent_paths:
-        events.extend(load_jsonl_events(sp, f"subagent:{sp.stem}"))
-
-    # Session ID may be unknown when given a raw subagent path — sniff it.
-    session_id = bundle.session_id
-    if not session_id:
-        for obj in events:
-            sid = obj.get("sessionId")
-            if sid:
-                session_id = sid
-                break
-
+    # Codex rollout transcripts live outside ~/.claude and use a different
+    # envelope. Accept either a direct path or a Codex UUID/prefix (matched
+    # against ~/.codex/sessions/**/rollout-*.jsonl), then convert to the same
+    # internal event shape Claude sessions produce.
     history_added = 0
-    if args.history and session_id:
-        hist = load_history_events(session_id)
-        if bundle.main_path and hist:
-            seen: set[str] = set()
+    cwd: str | None = None
+    codex_path = resolve_codex_path(args.session)
+    if codex_path is not None:
+        events, codex_meta = load_codex_events(codex_path)
+        session_id = codex_meta.get("session_id") or codex_path.stem
+        cwd = codex_meta.get("cwd")
+        bundle = SessionBundle(
+            session_id=session_id,
+            main_path=codex_path,
+            is_codex=True,
+            codex_meta=codex_meta,
+        )
+        args.history = False  # no Codex equivalent of ~/.claude/history.jsonl
+    else:
+        bundle = resolve_session(args.session)
+
+        # Subagent content is 100% sidechain. If that's all we have, the
+        # --sidechains flag would otherwise be a footgun.
+        if bundle.is_folder_only or bundle.subagent_paths and not bundle.main_path:
+            args.sidechains = True
+
+        # history.jsonl auto-default: on for folder-only, off otherwise.
+        if args.history is None:
+            args.history = bundle.is_folder_only
+
+        events = []
+        if bundle.main_path:
+            events.extend(load_jsonl_events(bundle.main_path, "main"))
+        for sp in bundle.subagent_paths:
+            events.extend(load_jsonl_events(sp, f"subagent:{sp.stem}"))
+
+        # Session ID may be unknown when given a raw subagent path — sniff it.
+        session_id = bundle.session_id
+        if not session_id:
             for obj in events:
-                if obj.get("type") != "user" or obj.get("_source") != "main":
-                    continue
-                c = obj.get("message", {}).get("content")
-                if isinstance(c, str):
-                    key = normalize_user_text(c)
-                    if key:
-                        seen.add(key)
-            hist = [h for h in hist
-                    if normalize_user_text(h["message"]["content"]) not in seen]
-        events.extend(hist)
-        history_added = len(hist)
+                sid = obj.get("sessionId")
+                if sid:
+                    session_id = sid
+                    break
+
+        if args.history and session_id:
+            hist = load_history_events(session_id)
+            if bundle.main_path and hist:
+                seen: set[str] = set()
+                for obj in events:
+                    if obj.get("type") != "user" or obj.get("_source") != "main":
+                        continue
+                    c = obj.get("message", {}).get("content")
+                    if isinstance(c, str):
+                        key = normalize_user_text(c)
+                        if key:
+                            seen.add(key)
+                hist = [h for h in hist
+                        if normalize_user_text(h["message"]["content"]) not in seen]
+            events.extend(hist)
+            history_added = len(hist)
 
     # ISO-8601 strings sort lexically; history ms-epoch was formatted to match.
     events.sort(key=lambda o: o.get("timestamp", ""))
 
-    cwd: str | None = None
-    for obj in events:
-        c = obj.get("cwd")
-        if c:
-            cwd = c
-            break
+    if cwd is None:
+        for obj in events:
+            c = obj.get("cwd")
+            if c:
+                cwd = c
+                break
 
     chunks: list[str] = []
     turns = 0
@@ -648,6 +890,15 @@ def main() -> int:
     idx = bundle.index_meta
     if not args.raw:
         out.write(f"# Session replay: `{session_id or bundle.session_id or '?'}`\n\n")
+        if bundle.is_codex:
+            cm = bundle.codex_meta
+            ver = cm.get("cli_version")
+            out.write(
+                "- **format**: OpenAI Codex CLI rollout"
+                + (f" (v{ver})" if ver else "") + "\n"
+            )
+            if cm.get("model"):
+                out.write(f"- **model**: {cm['model']}\n")
         if idx and idx.summary:
             out.write(f"- **summary**: {idx.summary}\n")
         if bundle.main_path:

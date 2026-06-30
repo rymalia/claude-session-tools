@@ -1,10 +1,13 @@
 # /replay — Replay a Prior Session
 
-Replay a previously recorded Claude Code session by extracting its JSONL transcript into readable markdown.
+Replay a previously recorded **Claude Code** or **OpenAI Codex CLI** session by extracting its JSONL transcript into readable markdown.
 
 Usage: `/replay <session-id-or-path> [flags]`
 
-The first argument is a session UUID, a prefix (≥4 chars), or an absolute path to a `.jsonl` file. Session files live at `~/.claude/projects/<slugified-cwd>/<session-id>.jsonl`; the extractor searches across all projects automatically.
+The first argument is a session UUID, a prefix (≥4 chars), or an absolute path to a `.jsonl` file. The extractor auto-detects the transcript format by content — no flag needed:
+
+- **Claude Code** sessions live at `~/.claude/projects/<slugified-cwd>/<session-id>.jsonl`; the extractor searches across all projects automatically.
+- **OpenAI Codex** sessions live at `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`; a bare Codex UUID/prefix is matched against that tree (a Codex lookup never poaches a Claude UUID — Claude wins when both could match). A full path to a Codex `.jsonl` always works.
 
 ## Step 1: Run the extractor
 
@@ -59,6 +62,15 @@ The extractor has already written the file (Step 1) and printed a `saved: <path>
 
 - If the replay is short (a few hundred lines), additionally `Read` the saved file and show it inline.
 - If the replay is large (many thousands of lines), do **not** dump it into the conversation — give the user a brief summary plus the file path, so the main context stays lean. Offer to surface specific turns on request.
+
+## Codex sessions
+
+Codex transcripts use a different on-disk shape — every line is a `{timestamp, type, payload}` envelope — but the extractor converts the conversational records into the same internal form as Claude sessions, so all flags, filenames, and `--save-dir` behavior are identical. The header shows `format: OpenAI Codex CLI rollout (vX)` and the model. Codex-specific behavior:
+
+- **Reasoning is encrypted.** Codex persists reasoning as opaque `encrypted_content` with no plaintext, so `--thinking` (and `--full`) renders a `> _reasoning:_ [encrypted by Codex]` placeholder per block rather than the actual reasoning. Plaintext is shown only on the rare occasion a summary is present.
+- **`--verbatim` is effectively a no-op** for Codex: it only suppresses Claude-specific harness-tag stripping (`<system-reminder>`, `<local-command-*>`), and Codex transcripts don't contain those tags. The output matches `--full`; the filename still distinguishes them.
+- **`--history` and `--sidechains` don't apply** — Codex has no `~/.claude/history.jsonl` equivalent and no subagent sidechain files in this format.
+- The clean user-typed prompt comes from Codex's `event_msg/user_message`; harness-injected context (AGENTS.md, environment) and the duplicate `agent_message` event stream are dropped.
 
 ## Notes
 

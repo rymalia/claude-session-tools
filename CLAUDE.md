@@ -87,6 +87,18 @@ Subagent transcripts (path contains `/subagents/` or filename starts with `agent
 
 **sessions-index.json metadata.** Each project directory may contain a `sessions-index.json` file with per-session metadata (`summary`, `firstPrompt`, `messageCount`, `created`, `modified`, `gitBranch`). This index survives cleanup even when all transcript files are deleted. The extractor enriches the replay header with index metadata when available, and as a last resort can resolve a UUID that has no `.jsonl` or folder by scanning all project indexes.
 
+**OpenAI Codex CLI support.** The extractor also replays Codex rollout transcripts, which live under `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl` and use a completely different shape: every line is a `{timestamp, type, payload}` envelope rather than a top-level role + `message`. Format is auto-detected by content (`is_codex_file` sniffs the envelope), so no `--codex` flag exists. A bare Codex UUID/prefix is resolved by `resolve_codex_path` globbing the Codex sessions tree; to avoid namespace collisions it only claims an id when the Claude tree has no matching `.jsonl` (Claude wins). The converter (`load_codex_events`) maps Codex records onto the **same Claude-shaped event dicts** the renderer already consumes, so all flags, filenames, and `--save-dir` logic are reused unchanged:
+
+| Codex record | Rendered as | Flag gate |
+|--------------|-------------|-----------|
+| `event_msg/user_message` | user text turn | always |
+| `response_item/message` role=assistant | assistant text turn | always |
+| `response_item/function_call`, `custom_tool_call` | assistant `tool_use` one-liner | `--tools` |
+| `response_item/function_call_output`, `custom_tool_call_output` | user `tool_result` | `--tool-results` |
+| `response_item/reasoning` | `> _reasoning:_ [encrypted by Codex]` placeholder | `--thinking` |
+
+Dropped as noise/duplication: `response_item/message` role in {user, developer} (harness-injected AGENTS.md/environment context and the system prompt), `event_msg/agent_message` (byte-identical to the assistant `response_item`), and bookkeeping (`token_count`, `task_started`/`task_complete`, `*_tool_call_end` echoes). Codex caveats: reasoning is encrypted (no plaintext, hence the placeholder); `--verbatim` is a no-op (no Claude harness tags to keep, so output matches `--full`); `--history`/`--sidechains` don't apply (no Codex equivalent). The header shows `format: OpenAI Codex CLI rollout (vX)` and the model.
+
 ## Testing changes
 
 There is no test suite. To exercise changes:
