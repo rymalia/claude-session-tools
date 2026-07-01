@@ -60,8 +60,13 @@ Existing files are **never overwritten**: a successive run of the same command w
 
 The extractor has already written the file (Step 1) and printed a `saved: <path> (N turns, M lines)` line. Always report that path to the user.
 
-- If the replay is short (a few hundred lines), additionally `Read` the saved file and show it inline.
-- If the replay is large (many thousands of lines), do **not** dump it into the conversation — give the user a brief summary plus the file path, so the main context stays lean. Offer to surface specific turns on request.
+The extraction itself is deterministic Python — no model reasoning is involved, so it costs nothing regardless of which model invoked the command. The only expensive step is **reading the saved file back into context to summarize or comment on it**. Route that step by size and by whether the user actually asked for a summary:
+
+- **File only (no summary requested).** Just report the `saved:` path. Do not read the file — nobody needs it in context.
+- **Short replay (a few hundred lines).** `Read` the saved file directly and show it inline or summarize as asked. No subagent — the round-trip and hand-off overhead would cost more than reading it yourself.
+- **Large replay (many thousands of lines) *and* a summary/commentary is wanted.** Do **not** `Read` the raw file into this (frontier) context. Instead delegate the bulk read to a **Sonnet subagent** (`Agent` tool, `subagent_type: general-purpose`, `model: sonnet`): have it Read the saved file and return a compact digest (key turns, decisions, outcome). Then add your commentary on the *digest*, keeping the multi-thousand-line transcript out of this context entirely. Offer to surface specific turns on request.
+
+Delegating the read spends cheap tokens on the large mechanical read and reserves this context for synthesis and commentary. The gate is not "which model processes the transcript" (the Python does that); it is "does anything need to read the extracted file into a frontier context, and if so, how big is it?"
 
 ## Codex sessions
 
