@@ -99,6 +99,12 @@ Subagent transcripts (path contains `/subagents/` or filename starts with `agent
 
 Dropped as noise/duplication: `response_item/message` role in {user, developer} (harness-injected AGENTS.md/environment context and the system prompt), `event_msg/agent_message` (byte-identical to the assistant `response_item`), and bookkeeping (`token_count`, `task_started`/`task_complete`, `*_tool_call_end` echoes). Codex caveats: reasoning is encrypted (no plaintext, hence the placeholder); `--verbatim` is a no-op (no Claude harness tags to keep, so output matches `--full`); `--history`/`--sidechains` don't apply (no Codex equivalent). The header shows `format: OpenAI Codex CLI rollout (vX)` and the model.
 
+### `/replay-merge` contract
+
+`scripts/merge-sessions.py` renders **two or more** sessions as one timestamp-sorted timeline. It imports `extract-session.py` as a sibling module (via `importlib`) and reuses its resolution, loading, and rendering wholesale — the merger only pools events, badges each by origin (`A·<short8>`, `B·…`), and splices those badges into the headers `render_event` produces. Because it delegates resolution per-argument, **a merge can mix Claude Code and OpenAI Codex sessions freely** — each positional is run through `resolve_codex_path` first (Codex) then `resolve_session` (Claude), exactly as the single-session `main()` does, and Codex sessions are badged with their CLI version.
+
+The merge path has its own `main()`/argparse, so it must be kept in lock-step with feature work on `/replay`'s argparse layer (the shared *renderer* is inherited automatically; the *CLI layer* is not). Parity items that had to be mirrored explicitly: `--embed-images` must be threaded through `build_args` (the renderer reads `args.embed_images` directly, so its absence is an `AttributeError` on any image block, not a missing feature); `--save-dir` reuses the same flag-token vocabulary (`derive_flag_tokens`) but writes `replay-merge-<shortA>-<shortB>[…][-<flags>].md` via a merge-local non-clobbering path builder (the single-session `derive_output_path` hardcodes a `replay-<id>` stem). Merge has no `--history` (no cross-session concept) and adds `--models` to badge each assistant turn with its producing model. The command markdown (`commands/replay-merge.md`) follows the same always-save contract as `/replay` (`--save-dir docs`) and the same size/intent gating for whether to read the saved file back (delegating large-file reads to a Sonnet subagent).
+
 ## Testing changes
 
 There is no test suite. To exercise changes:
