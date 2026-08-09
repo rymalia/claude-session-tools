@@ -13,7 +13,7 @@ Create a factual handoff document while the current session context is still ava
 
 2. Collect end-time and project metadata in one call:
 
-   - Resolve the plugin root as two directories above this `SKILL.md` file.
+   - Resolve the plugin root as `../..` from the directory containing this `SKILL.md`.
    - Run `bash "<plugin-root>/scripts/collect-metadata.sh"` exactly once.
    - Parse its `now`, `project`, optional `branch`, and optional `open_prs` lines.
    - Do not replace the consolidated call with separate date, project, branch, or PR commands.
