@@ -1,0 +1,20 @@
+{
+  "name": "session-tools",
+  "version": "1.8.0",
+  "description": "Session timestamps, durable summaries, and transcript replay for Claude Code and OpenAI Codex",
+  "author": {
+    "name": "rymalia"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Session Tools",
+    "shortDescription": "Summarize and replay coding sessions",
+    "longDescription": "Capture exact session metadata, write durable end-of-session summaries, and replay Claude Code or Codex transcripts.",
+    "developerName": "rymalia",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use Session Tools to summarize this coding session."
+    ]
+  }
+}

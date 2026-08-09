@@ -1,0 +1,4 @@
+interface:
+  display_name: "Session Summary"
+  short_description: "Capture a durable end-of-session recap"
+  default_prompt: "Use $session-summary to summarize this coding session."

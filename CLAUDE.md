@@ -4,21 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A **Claude Code plugin marketplace** named `rymalia-plugins`. It is declarative — no build, no tests, no package manager. Work consists of editing JSON manifests, Markdown command definitions, and a Bash hook script.
+A dual-host **Claude Code and OpenAI Codex plugin marketplace** named `rymalia-plugins`. It is declarative — no build, no package manager, and only focused script validation. Work consists of editing JSON manifests, Markdown command or skill definitions, and session hook scripts.
 
 ## Repository layout
 
 - `.claude-plugin/marketplace.json` — marketplace manifest listing available plugins. Each entry's `source` points at a directory under `plugins/`.
+- `.agents/plugins/marketplace.json` — repo-local Codex marketplace manifest.
 - `plugins/<name>/.claude-plugin/plugin.json` — per-plugin manifest (name, version, description, author).
-- `plugins/<name>/hooks/hooks.json` — hook registrations. Use `${CLAUDE_PLUGIN_ROOT}` to reference files inside the plugin.
+- `plugins/<name>/.codex-plugin/plugin.json` — Codex plugin manifest and bundled-skill metadata.
+- `plugins/<name>/hooks/hooks.json` — shared hook registrations. Codex provides `${CLAUDE_PLUGIN_ROOT}` as a compatibility alias.
 - `plugins/<name>/commands/*.md` — slash command definitions. The filename (sans `.md`) becomes the command name.
+- `plugins/<name>/skills/*/SKILL.md` — Codex skill definitions.
 - `plugins/<name>/scripts/` — shell scripts invoked by hooks.
 
-When adding a new plugin, register it in both `marketplace.json` and its own `plugin.json`, and bump the version in both places together.
+Keep the `session-tools` version synchronized across `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json`.
 
 ## The `session-tools` plugin
 
-Provides three slash commands (`/now`, `/session-summary`, `/replay`) and one `SessionStart` hook that captures session timestamps.
+Provides Claude slash commands, Codex skills, transcript replay for both session formats, and one shared `SessionStart` hook that captures host-specific session metadata.
 
 ### Required permissions (first-run setup)
 
@@ -45,7 +48,7 @@ The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $S
 
 ### How the timestamp mechanism works
 
-`scripts/session-start-time.sh` is run by the `SessionStart` hook and reads a JSON payload from stdin. The `source` field drives behavior:
+`scripts/session-start.sh` is run by the shared `SessionStart` hook and dispatches by host. Claude Code continues to use `scripts/session-start-time.sh`, which reads a JSON payload from stdin. The `source` field drives behavior:
 
 | `source`        | Effect                                                                 |
 |-----------------|------------------------------------------------------------------------|
@@ -58,6 +61,22 @@ The script also extracts `session_id` from the hook payload and persists it as `
 The script persists values by appending `export` lines to `$CLAUDE_ENV_FILE` (so they survive as real env vars for the whole session), then also prints `KEY=VALUE` lines to stdout so they appear in the model's context. Downstream commands like `/session-summary` read them back with `echo $SESSION_START_TIME`.
 
 If you modify this script, preserve both behaviors — the `CLAUDE_ENV_FILE` write (for persistence) *and* the stdout echo (for immediate context injection).
+
+### Codex session-summary support
+
+Codex loads `skills/session-summary/SKILL.md` as `$session-summary`. On `SessionStart`, the dispatcher detects Codex through `PLUGIN_ROOT`/`PLUGIN_DATA` and runs `scripts/codex-session-state.py`. The Python script is standard-library only and stores one JSON state file per session under `$PLUGIN_DATA/session-summary/`.
+
+Codex sources behave as follows:
+
+| `source` | Effect |
+|----------|--------|
+| `startup`/`clear` | Record the exact start time and clear resume timestamps. |
+| `resume` | Preserve the stored start time and append the exact resume time. |
+| `compact` | Re-inject stored metadata without changing timestamps. |
+
+The hook emits `SESSION_SUMMARY_METADATA` as additional developer context. The skill combines it with one call to `scripts/collect-metadata.sh`, then writes the same summary structure as the Claude command. If the hook was not trusted or no state exists, the skill leaves the start time blank rather than parsing Codex rollout files or estimating it.
+
+Codex discovers `hooks/hooks.json` automatically from the plugin root. Installed hooks must be reviewed and trusted through `/hooks` before they run.
 
 ### `/session-summary` contract
 
@@ -112,6 +131,7 @@ There is no test suite. To exercise changes:
 1. Reload the plugin in a Claude Code session (restart, or re-install from the marketplace path).
 2. For the `SessionStart` hook, start a fresh session and verify `SESSION_START_TIME` appears in context; resume the session and verify `SESSION_RESUME_TIME` accumulates.
 3. For command edits, invoke the slash command and confirm the behavior described in the `.md` file.
+4. For Codex changes, validate the skill and plugin manifests, then install from the repo marketplace in a new session. Review the hook through `/hooks`, start and resume a session, and confirm `SESSION_SUMMARY_METADATA` retains the original start time without treating compaction as a resume.
 
 ## Git policy (inherited from parent `CLAUDE.md`)
 
