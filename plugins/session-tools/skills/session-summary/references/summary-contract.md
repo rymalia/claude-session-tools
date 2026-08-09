@@ -18,7 +18,7 @@ Use:
 
 ```yaml
 ---
-session_id: <Codex session id>
+session_id: <session id>
 date: YYYY-MM-DD
 time: "<start time> – <end time>"
 resumed: "<resume1>, <resume2>, ..."

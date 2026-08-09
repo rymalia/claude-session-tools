@@ -4,7 +4,7 @@
 
 This repository is a dual-host Claude Code and OpenAI Codex plugin marketplace, not an application package. The Claude marketplace manifest lives at `.claude-plugin/marketplace.json`; the Codex marketplace manifest lives at `.agents/plugins/marketplace.json`. The active plugin is `plugins/session-tools/`, with host manifests at `plugins/session-tools/.claude-plugin/plugin.json` and `plugins/session-tools/.codex-plugin/plugin.json`.
 
-Claude commands are Markdown files in `plugins/session-tools/commands/`. Codex workflows are under `plugins/session-tools/skills/`. Shared hook configuration is in `plugins/session-tools/hooks/hooks.json`, with host-specific handling dispatched by `plugins/session-tools/scripts/session-start.sh`. Supporting scripts live in `plugins/session-tools/scripts/`. Long-form reference notes and generated session summaries live under `docs/`.
+Claude Code slash commands (`/now`, `/replay`, `/replay-merge`) are Markdown files in `plugins/session-tools/commands/`. Skills live under `plugins/session-tools/skills/`; `session-summary` is a dual-host skill (Claude Code `/session-tools:session-summary`, bare `/session-summary` while unclaimed; Codex `$session-tools:session-summary`) that bundles its own metadata script at `plugins/session-tools/skills/session-summary/scripts/collect-metadata.sh`, referenced via `${CLAUDE_SKILL_DIR}`. Shared hook configuration is in `plugins/session-tools/hooks/hooks.json`, with host-specific handling dispatched by `plugins/session-tools/scripts/session-start.sh`. Other shared scripts live in `plugins/session-tools/scripts/`. Long-form reference notes and generated session summaries live under `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -15,13 +15,13 @@ python3 -m py_compile plugins/session-tools/scripts/extract-session.py
 python3 -m py_compile plugins/session-tools/scripts/codex-session-state.py
 bash -n plugins/session-tools/scripts/session-start.sh
 bash -n plugins/session-tools/scripts/session-start-time.sh
-bash -n plugins/session-tools/scripts/collect-metadata.sh
+bash -n plugins/session-tools/skills/session-summary/scripts/collect-metadata.sh
 ```
 
 To smoke-test metadata output locally:
 
 ```bash
-bash plugins/session-tools/scripts/collect-metadata.sh
+bash plugins/session-tools/skills/session-summary/scripts/collect-metadata.sh
 ```
 
 To exercise replay without installing the plugin:

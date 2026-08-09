@@ -13,38 +13,37 @@ A dual-host **Claude Code and OpenAI Codex plugin marketplace** named `rymalia-p
 - `plugins/<name>/.claude-plugin/plugin.json` — per-plugin manifest (name, version, description, author).
 - `plugins/<name>/.codex-plugin/plugin.json` — Codex plugin manifest and bundled-skill metadata.
 - `plugins/<name>/hooks/hooks.json` — shared hook registrations. Codex provides `${CLAUDE_PLUGIN_ROOT}` as a compatibility alias.
-- `plugins/<name>/commands/*.md` — slash command definitions. The filename (sans `.md`) becomes the command name.
-- `plugins/<name>/skills/*/SKILL.md` — Codex skill definitions.
-- `plugins/<name>/scripts/` — shell scripts invoked by hooks.
+- `plugins/<name>/commands/*.md` — Claude Code slash command definitions (`/now`, `/replay`, `/replay-merge`). The filename (sans `.md`) becomes the command name.
+- `plugins/<name>/skills/*/SKILL.md` — skill definitions. `session-summary` is a **dual-host** skill. Its canonical invocations are `/session-tools:session-summary` on Claude Code (bare `/session-summary` also works while unclaimed) and `$session-tools:session-summary` on Codex. A skill may bundle its own `scripts/` (e.g. `skills/session-summary/scripts/collect-metadata.sh`), referenced from the body and `allowed-tools` via `${CLAUDE_SKILL_DIR}`.
+- `plugins/<name>/scripts/` — shared shell/Python scripts invoked by hooks and commands (`session-start.sh`, `session-start-time.sh`, `codex-session-state.py`, `extract-session.py`, `merge-sessions.py`).
 
 Keep the `session-tools` version synchronized across `.claude-plugin/marketplace.json`, `.claude-plugin/plugin.json`, and `.codex-plugin/plugin.json`.
 
 ## The `session-tools` plugin
 
-Provides Claude slash commands, Codex skills, transcript replay for both session formats, and one shared `SessionStart` hook that captures host-specific session metadata.
+Provides a dual-host `session-summary` skill, Claude Code slash commands (`/now`, `/replay`, `/replay-merge`), transcript replay for both session formats, and one shared `SessionStart` hook that captures host-specific session metadata.
 
 ### Required permissions (first-run setup)
 
-`/session-summary` needs a single allowlist entry. `/now` is a separate standalone command and needs its own entry if you plan to use it on its own.
+`/session-summary` needs **no allowlist entry** — the skill self-authorizes its one script via `allowed-tools` (see below). `/now` is a separate standalone command and still needs one entry if you use it on its own.
 
 | Command | Used by | Allowlist entry |
 |---------|---------|-----------------|
-| `bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh"` | `/session-summary` (end-time, project, branch, open PRs) | `Bash(bash "$SESSION_TOOLS_ROOT/scripts/collect-metadata.sh")` |
 | `date '+%Y-%m-%d %I:%M %p %Z'` | `/now` standalone (NOT invoked by `/session-summary`) | `Bash(date:*)` |
 
-Add to the `permissions.allow` array in `~/.claude/settings.json` (user-level, so they apply in any project). Both are read-only.
+Add to the `permissions.allow` array in `~/.claude/settings.json` (user-level, so it applies in any project). It is read-only.
+
+**Why `/session-summary` needs no entry.** The skill lives at `skills/session-summary/SKILL.md` and bundles `scripts/collect-metadata.sh` beside it. Its frontmatter declares `allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/collect-metadata.sh)`, and the skill body invokes the script through the same `${CLAUDE_SKILL_DIR}` variable. Claude Code substitutes `${CLAUDE_SKILL_DIR}` in **both** the `allowed-tools` rule and the body, so the pre-authorized rule matches the exact command the skill runs — the script executes without a permission prompt, scoped to the invoking turn. Because `${CLAUDE_SKILL_DIR}` carries no version string (unlike `${CLAUDE_PLUGIN_ROOT}`), this survives plugin upgrades with no user action. This replaced the earlier `SESSION_TOOLS_ROOT`-in-`$CLAUDE_ENV_FILE` workaround, which existed only to keep a version-stable path in a manual allowlist entry.
 
 **Why `/session-summary` no longer invokes `/now`.** When Claude Code surfaces slash commands as skills, they are namespaced by plugin (`session-tools:now`). Invoking a bare `/now` from inside another command's markdown was fragile — the LLM occasionally rendered it as `Skill(now)` and hit "Unknown skill: now." To avoid the cross-command dependency, the metadata script emits `now: <timestamp>` as its first line. `/now` remains a useful standalone command; it just isn't called from `/session-summary` anymore.
 
-The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $SESSION_RESUME_TIME`) are covered by the common `Bash(echo:*)` entry most users already have.
+There are no other shells to authorize. The start/resume timestamps are folded into the pre-authorized collector output (its `session_start`/`session_resume` lines — the collector reads them from the hook-persisted env vars in `$CLAUDE_ENV_FILE`), so `/session-summary` issues no command that isn't already covered by the skill's own `allowed-tools`. It is genuinely prompt-free.
 
-**Why the allowlist entry uses a literal `$SESSION_TOOLS_ROOT`.** Claude Code matches permission strings against the **pre-expansion** command text, not the resolved path. `${CLAUDE_PLUGIN_ROOT}` embeds the plugin version, so an exact-path allow would break on every upgrade. The `SessionStart` hook persists `SESSION_TOOLS_ROOT` to `$CLAUDE_ENV_FILE`, and the `/session-summary` command invokes the script via that var — so the allowlist string stays stable across plugin versions.
-
-**Why settings cascade matters here.** Claude Code merges allowlists from `~/.claude/settings.json` → `~/.claude/settings.local.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json`. It does **not** walk up from `<cwd>` through parent directories. Permissions added to `~/projects/.claude/settings.local.json` only apply when `~/projects` is itself the cwd, not when a subdirectory is. Because `/session-summary` is designed to run in any project, put its permissions at the user level.
+**Why settings cascade matters here.** Claude Code merges allowlists from `~/.claude/settings.json` → `~/.claude/settings.local.json` → `<cwd>/.claude/settings.json` → `<cwd>/.claude/settings.local.json`. It does **not** walk up from `<cwd>` through parent directories. Permissions added to `~/projects/.claude/settings.local.json` only apply when `~/projects` is itself the cwd, not when a subdirectory is. `/session-summary` now needs no entry at all, but `/now` still does — because `/now` can run in any project, put its `Bash(date:*)` allow at the user level.
 
 ### Metadata collection script
 
-`scripts/collect-metadata.sh` bundles `date`, `basename "$PWD"`, `git branch --show-current`, and `gh pr list ...` into a single invocation. Output is `key: value` lines: `now:` (always), `project:` (always), `branch:` (omitted if not a git repo), `open_prs:` (omitted if `gh` isn't installed). If you add a new field to the `/session-summary` frontmatter, prefer extending this script over adding a second shell-out — keep the command to one permission surface.
+`skills/session-summary/scripts/collect-metadata.sh` (bundled beside the skill so `${CLAUDE_SKILL_DIR}` reaches it) bundles `date`, `basename "$PWD"`, `git branch --show-current`, and `gh pr list ...` into a single invocation. Output is `key: value` lines: `now:` (always), `project:` (always), `branch:` (omitted if not a git repo), `open_prs:` (omitted if `gh` isn't installed), and `session_start:`/`session_resume:` (Claude Code only — read from the hook-persisted `SESSION_START_TIME`/`SESSION_RESUME_TIME` env vars, omitted under Codex which supplies them via `SESSION_SUMMARY_METADATA`). If you add a new field to the `/session-summary` frontmatter, prefer extending this script over adding a second shell-out — one bundled script keeps the `allowed-tools` grant to a single exact-path rule and the whole flow prompt-free.
 
 ### How the timestamp mechanism works
 
@@ -56,15 +55,15 @@ The remaining shells in `/session-summary` (`echo $SESSION_START_TIME`, `echo $S
 | `resume`        | Preserve `SESSION_START_TIME`; append current time to `SESSION_RESUME_TIME` as a comma-separated list. |
 | `compact`       | No-op — values are re-injected unchanged.                              |
 
-The script also extracts `session_id` from the hook payload and persists it as `CLAUDE_SESSION_ID` (re-captured on every source so resume/compact keep it fresh). This is the UUID naming the JSONL transcript at `~/.claude/projects/<slug>/<id>.jsonl` — the same id `/replay` consumes — and `/session-summary` stamps it into frontmatter.
+The script no longer captures the session id. `/session-summary` reads the UUID from the native `${CLAUDE_SESSION_ID}` template variable instead — it is the id naming the JSONL transcript at `~/.claude/projects/<slug>/<id>.jsonl` (the same id `/replay` consumes), and Claude Code substitutes it directly into the skill body.
 
-The script persists values by appending `export` lines to `$CLAUDE_ENV_FILE` (so they survive as real env vars for the whole session), then also prints `KEY=VALUE` lines to stdout so they appear in the model's context. Downstream commands like `/session-summary` read them back with `echo $SESSION_START_TIME`.
+The script persists timestamps by appending `export` lines to `$CLAUDE_ENV_FILE` (so they survive as real env vars for the whole session), then also prints `KEY=VALUE` lines to stdout so they appear in the model's context. Because `$CLAUDE_ENV_FILE` is sourced as a preamble before every Bash command, `collect-metadata.sh` re-emits the live values as its `session_start`/`session_resume` lines — so `/session-summary` gets them from the one pre-authorized call without any separate `echo`.
 
 If you modify this script, preserve both behaviors — the `CLAUDE_ENV_FILE` write (for persistence) *and* the stdout echo (for immediate context injection).
 
 ### Codex session-summary support
 
-Codex loads `skills/session-summary/SKILL.md` as `$session-summary`. On `SessionStart`, the dispatcher detects Codex through `PLUGIN_ROOT`/`PLUGIN_DATA` and runs `scripts/codex-session-state.py`. The Python script is standard-library only and stores one JSON state file per session under `$PLUGIN_DATA/session-summary/`.
+Codex loads the same `skills/session-summary/SKILL.md` as `$session-tools:session-summary` (the skill is host-aware: Claude-only steps and Codex-only steps are labelled inline). On `SessionStart`, the dispatcher detects Codex through `PLUGIN_ROOT`/`PLUGIN_DATA` and runs `scripts/codex-session-state.py`. The Python script is standard-library only and stores one JSON state file per session under `$PLUGIN_DATA/session-summary/`.
 
 Codex sources behave as follows:
 
@@ -74,13 +73,13 @@ Codex sources behave as follows:
 | `resume` | Preserve the stored start time and append the exact resume time. |
 | `compact` | Re-inject stored metadata without changing timestamps. |
 
-The hook emits `SESSION_SUMMARY_METADATA` as additional developer context. The skill combines it with one call to `scripts/collect-metadata.sh`, then writes the same summary structure as the Claude command. If the hook was not trusted or no state exists, the skill leaves the start time blank rather than parsing Codex rollout files or estimating it.
+The hook emits `SESSION_SUMMARY_METADATA` as additional developer context. On Codex the skill reads `session_id`/`start_time`/`resume_times` from that block and combines them with one call to the bundled `scripts/collect-metadata.sh` (resolved by absolute path from the skill's own directory, since Codex does not substitute `${CLAUDE_SKILL_DIR}`). If the hook was not trusted or no state exists, the skill leaves the start time blank rather than parsing Codex rollout files or estimating it.
 
 Codex discovers `hooks/hooks.json` automatically from the plugin root. Installed hooks must be reviewed and trusted through `/hooks` before they run.
 
 ### `/session-summary` contract
 
-The command requires timestamps to come from `SESSION_START_TIME`, `SESSION_RESUME_TIME`, or `/now` — **never estimated**. Output path is `docs/session-summary-YYYY-MM-DD-<short-descriptor>.md` with YAML frontmatter (`date`, `time`, `project`, optional `session_id`/`resumed`/`branch`/`related_pr`). The `session_id` comes from `CLAUDE_SESSION_ID` (injected by the SessionStart hook). Omit optional frontmatter fields entirely rather than leaving them blank.
+The skill requires timestamps to come from the collector's `session_start`/`session_resume` lines (Claude Code) or the `SESSION_SUMMARY_METADATA` block (Codex) — **never estimated**. Output path is `docs/session-summary-YYYY-MM-DD-<short-descriptor>.md` with YAML frontmatter (`date`, `time`, `project`, optional `session_id`/`resumed`/`branch`/`related_pr`). On Claude Code the `session_id` comes from the native `${CLAUDE_SESSION_ID}` template variable; on Codex from `SESSION_SUMMARY_METADATA` (or `CODEX_THREAD_ID`). Omit optional frontmatter fields entirely rather than leaving them blank.
 
 ### `/replay` contract
 
