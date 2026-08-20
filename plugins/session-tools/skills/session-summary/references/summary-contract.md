@@ -5,8 +5,10 @@
 Save to:
 
 ```text
-docs/session-summary-YYYY-MM-DD-{very-short-descriptor}.md
+docs/session-summaries/session-summary-YYYY-MM-DD-{very-short-descriptor}.md
 ```
+
+Create `docs/session-summaries/` if it does not exist. This path applies unconditionally in every project; older summaries sitting at `docs/` root are fine to leave where they are.
 
 Use the end date from the metadata script. Make the descriptor two to four lowercase words separated by hyphens and representative of the session's main focus.
 

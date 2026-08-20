@@ -79,7 +79,7 @@ Codex discovers `hooks/hooks.json` automatically from the plugin root. Installed
 
 ### `/session-summary` contract
 
-The skill requires timestamps to come from the collector's `session_start`/`session_resume` lines (Claude Code) or the `SESSION_SUMMARY_METADATA` block (Codex) — **never estimated**. Output path is `docs/session-summary-YYYY-MM-DD-<short-descriptor>.md` with YAML frontmatter (`date`, `time`, `project`, optional `session_id`/`resumed`/`branch`/`related_pr`). On Claude Code the `session_id` comes from the native `${CLAUDE_SESSION_ID}` template variable; on Codex from `SESSION_SUMMARY_METADATA` (or `CODEX_THREAD_ID`). Omit optional frontmatter fields entirely rather than leaving them blank.
+The skill requires timestamps to come from the collector's `session_start`/`session_resume` lines (Claude Code) or the `SESSION_SUMMARY_METADATA` block (Codex) — **never estimated**. Output path is `docs/session-summaries/session-summary-YYYY-MM-DD-<short-descriptor>.md` (directory created if absent) with YAML frontmatter (`date`, `time`, `project`, optional `session_id`/`resumed`/`branch`/`related_pr`). On Claude Code the `session_id` comes from the native `${CLAUDE_SESSION_ID}` template variable; on Codex from `SESSION_SUMMARY_METADATA` (or `CODEX_THREAD_ID`). Omit optional frontmatter fields entirely rather than leaving them blank.
 
 ### `/replay` contract
 

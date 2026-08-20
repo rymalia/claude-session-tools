@@ -40,7 +40,7 @@ Create a factual handoff document while the current session context is still ava
 
    Inspect the workspace only when needed to verify a claim. Respect repository instructions and do not attribute pre-existing worktree changes to this session. Never claim a command ran or a result passed unless the session contains evidence.
 
-5. Write the summary under `docs/` using the filename and structure in the contract. Check whether the target path already exists before writing. Never overwrite an existing summary; choose a more specific descriptor if necessary.
+5. Write the summary under `docs/session-summaries/` (creating that directory if absent) using the filename and structure in the contract. Check whether the target path already exists before writing. Never overwrite an existing summary; choose a more specific descriptor if necessary.
 
 6. Re-read the saved file and verify:
 

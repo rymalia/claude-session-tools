@@ -1,6 +1,6 @@
 {
   "name": "session-tools",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Session timestamps, durable summaries, and transcript replay for Claude Code and OpenAI Codex",
   "author": {
     "name": "rymalia"
