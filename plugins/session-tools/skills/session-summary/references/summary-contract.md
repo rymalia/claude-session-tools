@@ -71,9 +71,12 @@ List verification and validation actually performed. For a research or planning 
 
 Include useful, defensible metrics such as files modified, checks run, bugs fixed, source files audited, or features catalogued. Do not manufacture line counts or treat all current worktree changes as session changes.
 
-### Unfinished Work
+### Close-out section
 
-State remaining tasks and next steps. Write `None.` when the session genuinely finished everything rather than omitting the section.
+Every summary ends with exactly one close-out section. Which one depends on whether the repository declares a session-close contract (see below):
+
+- **No contract declared (default):** `### Unfinished Work` — state remaining tasks and next steps. Write `None.` when the session genuinely finished everything rather than omitting the section.
+- **Contract declared:** the contract's `closing_section`, in its `closing_format`, and **no** `Unfinished Work` section. The repository's tracker is the only backlog; the summary reports what the session changed in it and adds no work.
 
 ## Optional body sections
 
@@ -86,6 +89,37 @@ Include these when they improve the handoff:
 
 Keep discoveries separate from unfinished work: discoveries are context; unfinished work is action.
 
+## Repository session-close contract
+
+A repository may own its own definition of "what a session leaves behind" — typically because it runs a tracker whose versioned items are the single backlog, so a prose "unfinished work" list would be a second, drifting authority. It declares that by committing:
+
+```text
+docs/session-summaries/session-close-contract.yml
+```
+
+Check for this file before writing (step 1 of the workflow). If the file exists but cannot be parsed, lacks a required key, or declares a `version` other than `1`, **fail closed**: stop, report the problem to the user, and do not write a summary under either rule set — the default close-out applies only when the file is absent. If it is absent, the default rules above apply unchanged. If it is present, obey it exactly:
+
+```yaml
+version: 1
+closing_section: "Board updated"          # required — replaces "Unfinished Work"; must be the LAST section
+closing_format: "- WI-NNN: <state>"       # required — the only body the closing section may have
+forbidden_sections:                       # required — headings that must not appear anywhere
+  - "Unfinished Work"
+  - "Next Steps"
+check_command: "npm run pm -- summary-check {file}"   # optional — run after saving; `{file}` = summary path
+```
+
+Rules when a contract is declared:
+
+1. The final section of the summary is `## <closing_section>` and nothing follows it.
+2. Its body follows `closing_format` literally: one line per tracker item whose state the session changed, using the repository's real ids and states. If nothing changed, write the contract's stated empty form (for example `- none`). Do not paraphrase, do not add prose.
+3. None of the `forbidden_sections` headings may appear at any level, and no other section may carry a next-work list, priority order, or copied backlog. "What's next" lives in the tracker; the summary may say *where* the tracker is, never *what it contains*.
+4. `Current State` and `Discoveries / Handoff Notes` remain allowed — they are context, not action items.
+5. If `check_command` is present, run it with `{file}` replaced by the saved path after writing the summary, and fix what it reports before reporting the path to the user. It is a validator only; it never changes tracker state, and a failure is not a reason to fall back to the default close-out.
+6. The contract file is read-only from the skill's point of view. Never create, edit, or remove it as part of writing a summary.
+
+Worked examples live in [examples/](examples/): the default close-out, a contract-conforming close-out, and an annotated set of contract violations.
+
 ## Accuracy rules
 
 - Never estimate or guess timestamps.
@@ -93,3 +127,4 @@ Keep discoveries separate from unfinished work: discoveries are context; unfinis
 - Never claim tests, research, edits, commits, pushes, issues, or PRs without session evidence.
 - Distinguish changes made during this session from unrelated pre-existing workspace state.
 - Prefer a useful narrative over mechanically filling sections with repetitive content.
+- Copy counts, ids, and states from evidence in the session, and re-read each one against its source before saving; a swapped pair of numbers is a false claim.

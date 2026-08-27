@@ -1,6 +1,6 @@
 ---
 name: session-summary
-description: Generate and save a durable end-of-session summary with exact session metadata, decisions, changes, verification, discoveries, current state, and unfinished work. Works in both Claude Code (/session-tools:session-summary, or /session-summary when the bare name is unclaimed) and OpenAI Codex ($session-tools:session-summary). Use when the user invokes the command or asks to recap, summarize, close out, or preserve the valuable context from the current coding session.
+description: Generate and save a durable end-of-session summary with exact session metadata, decisions, changes, verification, discoveries, current state, and a close-out section — the generic unfinished-work list, or the repository's own session-close contract when it declares one. Works in both Claude Code (/session-tools:session-summary, or /session-summary when the bare name is unclaimed) and OpenAI Codex ($session-tools:session-summary). Use when the user invokes the command or asks to recap, summarize, close out, or preserve the valuable context from the current coding session.
 allowed-tools:
   - Bash(${CLAUDE_SKILL_DIR}/scripts/collect-metadata.sh)
 ---
@@ -14,6 +14,8 @@ Create a factual handoff document while the current session context is still ava
 ## Workflow
 
 1. Read [references/summary-contract.md](references/summary-contract.md) completely before writing the summary.
+
+   Then check whether the repository declares a **session-close contract** at `docs/session-summaries/session-close-contract.yml`. If the file exists, read it: its `closing_section` replaces the generic `Unfinished Work` close-out, its `forbidden_sections` may not appear, and its optional `check_command` runs after saving (contract §"Repository session-close contract"). If it is absent, the default close-out applies.
 
 2. **Collect metadata in one call.** Run the bundled collector exactly once — never substitute separate `date`, `basename`, `git`, or `gh` calls:
 
@@ -36,7 +38,7 @@ Create a factual handoff document while the current session context is still ava
    - files or systems changed;
    - tests and research actually performed;
    - discoveries a future session would otherwise need to rediscover;
-   - current state and unfinished work.
+   - current state and — per the close-out rule chosen in step 1 — either unfinished work or the tracker items whose state changed.
 
    Inspect the workspace only when needed to verify a claim. Respect repository instructions and do not attribute pre-existing worktree changes to this session. Never claim a command ran or a result passed unless the session contains evidence.
 
@@ -48,6 +50,9 @@ Create a factual handoff document while the current session context is still ava
    - optional frontmatter fields with no value were omitted;
    - decisions include rationale;
    - testing and research claims are evidence-backed;
-   - unfinished work is explicit, even when there is none.
+   - the close-out section is correct for the repository: without a contract, `Unfinished Work` is explicit even when there is none; with a contract, the final section is its `closing_section` in its `closing_format`, and no `forbidden_sections` heading appears anywhere;
+   - every count, id, and state was copied from evidence in the session and re-checked against it.
+
+7. **Contract validator (only when the contract declares `check_command`).** Run it with `{file}` replaced by the saved path. It is not covered by this skill's `allowed-tools`, so it may prompt. If it reports violations, fix the summary and re-run until clean; never satisfy it by editing the contract or the tracker.
 
 Report the saved path to the user.
