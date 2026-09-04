@@ -480,13 +480,48 @@ def resolve_codex_path(id_or_path: str) -> Path | None:
     return matches[0] if matches else None
 
 
+def _codex_user_prompt(payload: dict):
+    """The human-typed prompt from a Codex event_msg payload, or None.
+
+    Two on-disk shapes, both supported:
+        pre  2026-08-18: event_msg/user_message   {message, images|local_images}
+        post 2026-08-18: event_msg/item_completed {item: {type: "UserMessage",
+                                                   content: [{type: text|image|
+                                                   local_image|skill, ...}]}}
+    Image attachments of any shape collapse to a "[N image(s) attached]" note.
+    Mirrored by userPromptFromEvent() in ai-session-manager's codex adapter —
+    keep the two in lockstep (its export-parity check diffs against this file).
+    """
+    ptype = payload.get("type")
+    if ptype == "user_message":
+        text = payload.get("message") or ""
+        imgs = payload.get("images") or payload.get("local_images") or []
+        n_images = len(imgs)
+    elif ptype == "item_completed":
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "UserMessage":
+            return None
+        blocks = [b for b in (item.get("content") or []) if isinstance(b, dict)]
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        # `skill` blocks are resolved `$skill` mentions already present in the
+        # text — dropped rather than rendered twice.
+        n_images = sum(1 for b in blocks if b.get("type") in ("image", "local_image"))
+    else:
+        return None
+    if n_images:
+        note = f"[{n_images} image(s) attached]"
+        text = note if not text.strip() else f"{text}\n\n{note}"
+    return text
+
+
 def load_codex_events(path: Path) -> tuple[list[dict], dict]:
     """Convert a Codex rollout transcript into Claude-shaped event dicts.
 
     Returns (events, meta); meta carries session_id/cwd/model/cli_version from the
     session_meta record. Only conversational signal is kept:
 
-        event_msg/user_message                -> user text turn
+        event_msg/user_message                -> user text turn (pre 2026-08-18)
+        event_msg/item_completed(UserMessage) -> user text turn (post 2026-08-18)
         response_item/message role=assistant  -> assistant text turn
         response_item/function_call           -> assistant tool_use   (--tools)
         response_item/custom_tool_call        -> assistant tool_use   (--tools)
@@ -536,16 +571,12 @@ def load_codex_events(path: Path) -> tuple[list[dict], dict]:
                 continue
 
             if etype == "event_msg":
-                # The clean, user-typed prompt. (All other event_msg subtypes are
-                # duplicates of response_items or bookkeeping — skip them.)
-                if payload.get("type") == "user_message":
-                    text = payload.get("message") or ""
-                    imgs = payload.get("images") or payload.get("local_images") or []
-                    if imgs:
-                        note = f"[{len(imgs)} image(s) attached]"
-                        text = note if not text.strip() else f"{text}\n\n{note}"
-                    if text.strip():
-                        emit("user", ts, text)
+                # The clean, user-typed prompt, in either on-disk shape (see
+                # _codex_user_prompt). All other event_msg subtypes are
+                # duplicates of response_items or bookkeeping — skip them.
+                text = _codex_user_prompt(payload)
+                if text and text.strip():
+                    emit("user", ts, text)
                 continue
 
             if etype == "response_item":
