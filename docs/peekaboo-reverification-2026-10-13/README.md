@@ -51,3 +51,27 @@ Conclusions:
 Two caveats from the benchmarking:
 - Plain AppleScript `entire contents` filtering failed twice on syntax. JXA's recursive walk worked first time.
 - Codex called System Events output "the largest" without measuring it; on Calculator it was the smallest but the least usable.
+
+## arc-cua vs. Peekaboo (added 2026-10-14)
+
+arc-cua is a second local macOS MCP driver; it is configured in Codex as `uvx --from arc-cua[macos]==0.1.1 arc-cua mcp` (pinned while issues #5–#7 are open). Full live evaluation: `~/projects/arc-cua/ASSESSMENT-2026-10-06.md`. That doc's Peekaboo timings (4–10s per observe) were taken on 4.5.0 and are now historical. The source comparison is from Codex gpt-5.6-luna; its three key claims (key-window menu commands, unchecked snapshot-less raw input, screenshots in the OpenAI Decisions payload) were checked by hand against the source.
+
+Both read the AX tree and click and type into native apps in the background, need Accessibility and Screen Recording, and send nothing off-machine from their MCP drivers.
+
+| | arc-cua 0.1.1 driver | Peekaboo 4.9.2 |
+|---|---|---|
+| Observe, warm (Calculator, measured) | 16–19 ms in-process (1.24s cold) | 0.34s per CLI call (1.6s cold) |
+| Background input | private SkyLight events; borrows key focus, then restores it | PID-routed events, AX press for single clicks; never activates or reorders |
+| Observed side effect | one background `TYPE_TEXT` left TextEdit's menus disabled until quit (finding C) | none observed |
+| Stale-target safety | structural-change guard plus semantic element checks; raw input sent without a snapshot is unchecked; `run_command` acts on the key window, which may not be the observed one | single-use snapshots (`SNAPSHOT_STALE`), process generation, exact window, owner, bounds and receiver revalidated around dispatch |
+| TCC holder | the process that runs `uvx` (the agent's terminal) | daemon or Peekaboo.app bridge |
+| MCP tools | 16 (menu commands, settle/wait, release) | 26 (adds dialog, Dock, Spaces, clipboard, verify_state) |
+| Off-machine paths | `arc-cua run` (JEV loop) sends state to TypeSafe; upstream's opt-in OpenAI Decisions provider sends AX state and screenshots | `agent`/`analyze` with cloud models |
+| Chrome | drives its own CDP Chrome (temporary profile), not the user's session | browser chrome only |
+
+Use:
+- **arc-cua** for bulk, low-stakes, repetitive AX work in apps with no unsaved work that matters, and for minimized or covered windows. MCP driver only.
+- **Peekaboo** for mutations that matter, wrong-window risk, dialogs, menus, and finding windows.
+- **`screencapture`** for evidence shots. **Claude-in-Chrome** for web pages. **computer-use** for canvases, visual judgment and cross-app work, on screens that may go to the model.
+
+Don't use arc-cua for Save in background apps (#6, silent no-op), screenshots of covered Chromium windows (#7, stale frames), or anything destructive via its decision loop (#5, close-guard bypass).
